@@ -24,7 +24,8 @@ For legals reasons (and because i don't want my github account banned lol) i can
 ```bash
  python main.py
 ```
-- For the first option (input directory) put the directory of you'r decrypted game files.
+- You can choose between 3 mode : downgrade, decrypt or full, if you don't have the decrypted files of your games you can choose the full option otherwise choose downgrade (default one).
+- For the first option (input directory) put the directory of you'r game files.
 - For the second option (output directory) put the directory where you'r downgraded and signed game files should be save.
 - If you don't know what the others options are doing keep the default value.
 - When you are sure of you'r configuration simply type "y" to confirme.
@@ -32,12 +33,17 @@ For legals reasons (and because i don't want my github account banned lol) i can
 - Make sure to run the Backpork payload for every new games (you maybe have to run [chmod_rec](https://github.com/zecoxao/chmod_rec) too).
 
 ### One line command
-You can also run a one line command, for exemple:
+You can also run a one line command, for exemple to simply downgrade to 7.00 and sign your game:
 ```bash
  python main.py --input "/home/user/ps5/decrypted" --output "/home/user/ps5/signed" --sdk-pair 7 --batch
 ```
+Or if you want to also decrypt the fake sign ELF:
+```bash
+ python main.py --mode full --input "/home/user/ps5/encrypted" --output "/home/user/ps5/signed" --sdk-pair 7 --batch
+```
 
 ## TODO
+- [X] Add FSELF decryptor.
 - [ ] Add BPS files patcher.
 
 ## Credit

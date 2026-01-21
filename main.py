@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from src.ps5_sdk_version_patcher import SDKVersionPatcher
 from src.make_fself import FakeSignedELFConverter
+from src.decrypt_fself import UnsignedELFConverter
 
 # ANSI color codes
 GREEN = '\033[92m'
@@ -21,10 +22,10 @@ BOLD = '\033[1m'
 def print_banner():
     """Print a banner for the tool."""
     banner = f"""
-{CYAN}{BOLD}╔══════════════════════════════════════════════════════════╗
-║         PS5 ELF Downgrade & Fake Sign Tool           ║
-║      SDK Version Patcher + Fake Signed Converter      ║
-╚══════════════════════════════════════════════════════════╝{RESET}
+{CYAN}{BOLD}╔══════════════════════════════════════════════════════════════════════╗
+║             PS5 ELF Processing Tool                          ║
+║       SDK Downgrade + Fake Sign + Decrypt Functions          ║
+╚══════════════════════════════════════════════════════════════════════╝{RESET}
 """
     print(banner)
 
@@ -173,6 +174,35 @@ def get_ptype_choice() -> int:
         except ValueError:
             print(f"{RED}Invalid input. Please enter a number.{RESET}")
 
+def get_operation_choice() -> str:
+    """Prompt user to select operation mode."""
+    operations = {
+        '1': 'downgrade_and_sign',
+        '2': 'decrypt_only',
+        '3': 'full_pipeline'
+    }
+    
+    print(f"\n{CYAN}Available Operations:{RESET}")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    print(f"{BOLD}{'Option':<8} {'Description':<40}{RESET}")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    print(f"  1       Downgrade and sign only (convert ELF to SELF)")
+    print(f"  2       Decrypt only (convert SELF to ELF)")
+    print(f"  3       Full pipeline (decrypt → downgrade → sign)")
+    
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    
+    while True:
+        choice = input(f"\n{CYAN}Select operation (1-3, default=1): {RESET}").strip()
+        if not choice:
+            print(f"{YELLOW}Using default: Downgrade and sign{RESET}")
+            return 'downgrade_and_sign'
+        
+        if choice in operations:
+            return operations[choice]
+        else:
+            print(f"{RED}Invalid choice. Please select 1-3.{RESET}")
+
 def copy_fakelib(source_dir: Path, output_dir: Path) -> Tuple[bool, str]:
     """
     Copy the fakelib directory to the output directory.
@@ -230,11 +260,120 @@ def is_elf_file(file_path: Path) -> bool:
     except:
         return False
 
-def process_files(input_dir: Path, output_dir: Path, sdk_pair: int, 
-                  paid: int, ptype: int, create_backup: bool = True,
-                  use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+def is_self_file(file_path: Path) -> bool:
     """
-    Main processing function that orchestrates the workflow.
+    Check if a file is a SELF file by checking its magic bytes.
+    
+    Args:
+        file_path: Path to the file to check
+        
+    Returns:
+        True if it's a SELF file
+    """
+    # Skip .bak backup files
+    if file_path.name.endswith('.bak'):
+        return False
+    
+    try:
+        with open(file_path, 'rb') as f:
+            magic = f.read(4)
+            # Check for PS4 and PS5 SELF magic
+            return magic in [b'\x4F\x15\x3D\x1D', b'\x54\x14\xF5\xEE']
+    except:
+        return False
+
+def decrypt_files(input_dir: Path, output_dir: Path, use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+    """
+    Decrypt SELF files back to ELF files.
+    
+    Args:
+        input_dir: Directory containing SELF files
+        output_dir: Directory for output ELF files
+        use_colors: Whether to use colored output
+        
+    Returns:
+        Dictionary with processing results
+    """
+    
+    results = {
+        'decrypt': {'successful': 0, 'failed': 0, 'files': {}}
+    }
+    
+    print(f"\n{BLUE}{BOLD}[Step 1/1] Decrypting SELF Files{RESET}")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    
+    # Create converter instance
+    converter = UnsignedELFConverter(verbose=use_colors)
+    
+    # Find all SELF files in input directory, skipping .bak files
+    self_files = []
+    for root, dirs, files in os.walk(input_dir):
+        for filename in files:
+            file_path = Path(root) / filename
+            
+            # Skip .bak backup files
+            if filename.endswith('.bak'):
+                continue
+            
+            if is_self_file(file_path):
+                self_files.append(file_path)
+    
+    if not self_files:
+        print(f"{YELLOW}No SELF files found in input directory{RESET}")
+        return results
+    
+    print(f"Found {len(self_files)} SELF file(s) to decrypt\n")
+    
+    # Create output directory structure
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    for self_file in self_files:
+        relative_path = self_file.relative_to(input_dir)
+        
+        # Output file keeps same name and extension
+        output_file = output_dir / relative_path
+        
+        # Create parent directories if they don't exist
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        print(f"  Decrypting: {relative_path}")
+        
+        # Decrypt the file
+        try:
+            success = converter.convert_file(str(self_file), str(output_file))
+            
+            results['decrypt']['files'][str(self_file)] = {
+                'success': success,
+                'output': str(output_file),
+                'message': 'Success' if success else 'Failed'
+            }
+            
+            if success:
+                results['decrypt']['successful'] += 1
+                print(f"    {GREEN}✓ Success{RESET}")
+            else:
+                results['decrypt']['failed'] += 1
+                print(f"    {RED}✗ Failed{RESET}")
+        except Exception as e:
+            results['decrypt']['failed'] += 1
+            error_msg = f"Error: {str(e)}"
+            results['decrypt']['files'][str(self_file)] = {
+                'success': False,
+                'output': str(output_file),
+                'message': error_msg
+            }
+            print(f"    {RED}✗ {error_msg}{RESET}")
+    
+    print(f"\n{CYAN}Decryption complete: {results['decrypt']['successful']} successful, "
+          f"{results['decrypt']['failed']} failed{RESET}")
+    
+    return results
+
+def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int, 
+                               paid: int, ptype: int, create_backup: bool = True,
+                               use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+    """
+    Process files through downgrade and signing pipeline.
     
     Args:
         input_dir: Directory containing decrypted files
@@ -281,10 +420,10 @@ def process_files(input_dir: Path, output_dir: Path, sdk_pair: int,
                 elf_files.append(file_path)
     
     if not elf_files:
-        print(f"{YELLOW}No ELF files found in input directory (excluding .bak files){RESET}")
+        print(f"{YELLOW}No ELF files found in input directory {RESET}")
         return results
     
-    print(f"Found {len(elf_files)} ELF file(s) to process (skipped .bak backup files)\n")
+    print(f"Found {len(elf_files)} ELF file(s) to process\n")
     
     for elf_file in elf_files:
         relative_path = elf_file.relative_to(input_dir)
@@ -404,53 +543,140 @@ def process_files(input_dir: Path, output_dir: Path, sdk_pair: int,
     
     return results
 
-def print_summary(results: Dict[str, Dict[str, any]], output_dir: Path):
+def process_full_pipeline(input_dir: Path, output_dir: Path, sdk_pair: int, 
+                         paid: int, ptype: int, create_backup: bool = True,
+                         use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+    """
+    Process files through full pipeline: decrypt → downgrade → sign.
+    
+    Args:
+        input_dir: Directory containing SELF files
+        output_dir: Directory for final output files
+        sdk_pair: SDK version pair number
+        paid: Program Authentication ID
+        ptype: Program type
+        create_backup: Whether to create backups during downgrade
+        use_colors: Whether to use colored output
+        
+    Returns:
+        Dictionary with processing results
+    """
+    
+    # Create temporary directory for intermediate files
+    import tempfile
+    temp_dir = Path(tempfile.mkdtemp(prefix="ps5_elf_"))
+    
+    try:
+        print(f"{CYAN}Using temporary directory: {temp_dir}{RESET}")
+        
+        # Step 1: Decrypt
+        decrypt_results = decrypt_files(input_dir, temp_dir, use_colors)
+        
+        if decrypt_results['decrypt']['successful'] == 0:
+            print(f"{RED}No files successfully decrypted. Aborting pipeline.{RESET}")
+            return {
+                'decrypt': decrypt_results['decrypt'],
+                'downgrade': {'successful': 0, 'failed': 0, 'files': {}},
+                'signing': {'successful': 0, 'failed': 0, 'files': {}},
+                'fakelib': {'success': False, 'message': 'Pipeline aborted'}
+            }
+        
+        # Step 2: Downgrade and sign
+        downgrade_sign_results = process_downgrade_and_sign(
+            temp_dir, output_dir, sdk_pair, paid, ptype, create_backup, use_colors
+        )
+        
+        # Combine results
+        results = {
+            'decrypt': decrypt_results['decrypt'],
+            'downgrade': downgrade_sign_results['downgrade'],
+            'signing': downgrade_sign_results['signing'],
+            'fakelib': downgrade_sign_results['fakelib']
+        }
+        
+        return results
+        
+    finally:
+        # Clean up temporary directory
+        try:
+            shutil.rmtree(temp_dir)
+            if use_colors:
+                print(f"{CYAN}Cleaned up temporary directory{RESET}")
+        except:
+            pass
+
+def print_summary(results: Dict[str, Dict[str, any]], output_dir: Path, operation: str):
     """Print a summary of the processing results."""
     print(f"\n{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     print(f"{CYAN}{BOLD}                      PROCESSING SUMMARY                     {RESET}")
     print(f"{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     
-    downgrade = results['downgrade']
-    signing = results['signing']
-    fakelib = results['fakelib']
+    operation_display = {
+        'downgrade_and_sign': 'Downgrade & Sign',
+        'decrypt_only': 'Decrypt Only',
+        'full_pipeline': 'Full Pipeline'
+    }
     
-    print(f"\n{BOLD}Downgrade Results:{RESET}")
-    print(f"  {GREEN}Successful: {downgrade['successful']}{RESET}")
-    print(f"  {RED if downgrade['failed'] > 0 else YELLOW}Failed: {downgrade['failed']}{RESET}")
-    print(f"  {CYAN}Total: {downgrade['successful'] + downgrade['failed']}{RESET}")
+    print(f"\n{BOLD}Operation:{RESET} {operation_display.get(operation, operation)}")
     
-    print(f"\n{BOLD}Signing Results:{RESET}")
-    print(f"  {GREEN}Successful: {signing['successful']}{RESET}")
-    print(f"  {RED if signing['failed'] > 0 else YELLOW}Failed: {signing['failed']}{RESET}")
-    print(f"  {CYAN}Total: {signing['successful'] + signing['failed']}{RESET}")
+    if 'decrypt' in results:
+        decrypt = results['decrypt']
+        print(f"\n{BOLD}Decryption Results:{RESET}")
+        print(f"  {GREEN}Successful: {decrypt['successful']}{RESET}")
+        print(f"  {RED if decrypt['failed'] > 0 else YELLOW}Failed: {decrypt['failed']}{RESET}")
+        print(f"  {CYAN}Total: {decrypt['successful'] + decrypt['failed']}{RESET}")
+        
+        if 'error' in decrypt:
+            print(f"  {RED}Error: {decrypt['error']}{RESET}")
     
-    print(f"\n{BOLD}Fakelib Copy:{RESET}")
-    if fakelib['success']:
-        print(f"  {GREEN}✓ {fakelib['message']}{RESET}")
-    else:
-        print(f"  {YELLOW}⚠ {fakelib['message']}{RESET}")
+    if 'downgrade' in results:
+        downgrade = results['downgrade']
+        print(f"\n{BOLD}Downgrade Results:{RESET}")
+        print(f"  {GREEN}Successful: {downgrade['successful']}{RESET}")
+        print(f"  {RED if downgrade['failed'] > 0 else YELLOW}Failed: {downgrade['failed']}{RESET}")
+        print(f"  {CYAN}Total: {downgrade['successful'] + downgrade['failed']}{RESET}")
+    
+    if 'signing' in results:
+        signing = results['signing']
+        print(f"\n{BOLD}Signing Results:{RESET}")
+        print(f"  {GREEN}Successful: {signing['successful']}{RESET}")
+        print(f"  {RED if signing['failed'] > 0 else YELLOW}Failed: {signing['failed']}{RESET}")
+        print(f"  {CYAN}Total: {signing['successful'] + signing['failed']}{RESET}")
+    
+    if 'fakelib' in results:
+        fakelib = results['fakelib']
+        if fakelib.get('message'):
+            print(f"\n{BOLD}Fakelib Copy:{RESET}")
+            if fakelib.get('success', False):
+                print(f"  {GREEN}✓ {fakelib['message']}{RESET}")
+            else:
+                print(f"  {YELLOW}⚠ {fakelib['message']}{RESET}")
     
     # List failed files if any
-    failed_downgrade = [f for f, data in downgrade['files'].items() if not data.get('success', False)]
-    failed_signing = [f for f, data in signing['files'].items() if not data.get('success', False)]
+    failed_files = []
     
-    if failed_downgrade:
-        print(f"\n{BOLD}Failed Downgrade Files:{RESET}")
-        for f in failed_downgrade[:5]:  # Show only first 5
-            filename = Path(f).name
-            msg = downgrade['files'][f].get('message', 'Unknown error')
-            print(f"  {RED}• {filename}: {msg[:100]}{'...' if len(msg) > 100 else ''}{RESET}")
-        if len(failed_downgrade) > 5:
-            print(f"  {YELLOW}... and {len(failed_downgrade) - 5} more{RESET}")
+    if 'decrypt' in results:
+        failed_files.extend([(f, 'Decryption', data.get('message', 'Unknown error'))
+                           for f, data in results['decrypt']['files'].items() 
+                           if not data.get('success', False)])
     
-    if failed_signing:
-        print(f"\n{BOLD}Failed Signing Files:{RESET}")
-        for f in failed_signing[:5]:  # Show only first 5
+    if 'downgrade' in results:
+        failed_files.extend([(f, 'Downgrade', data.get('message', 'Unknown error'))
+                           for f, data in results['downgrade']['files'].items() 
+                           if not data.get('success', False)])
+    
+    if 'signing' in results:
+        failed_files.extend([(f, 'Signing', data.get('message', 'Unknown error'))
+                           for f, data in results['signing']['files'].items() 
+                           if not data.get('success', False)])
+    
+    if failed_files:
+        print(f"\n{BOLD}Failed Files (first 5 shown):{RESET}")
+        for f, op, msg in failed_files[:5]:
             filename = Path(f).name
-            msg = signing['files'][f].get('message', 'Unknown error')
-            print(f"  {RED}• {filename}: {msg[:100]}{'...' if len(msg) > 100 else ''}{RESET}")
-        if len(failed_signing) > 5:
-            print(f"  {YELLOW}... and {len(failed_signing) - 5} more{RESET}")
+            print(f"  {RED}• [{op}] {filename}: {msg[:100]}{'...' if len(msg) > 100 else ''}{RESET}")
+        if len(failed_files) > 5:
+            print(f"  {YELLOW}... and {len(failed_files) - 5} more{RESET}")
     
     print(f"\n{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     print(f"{GREEN}{BOLD}Processing complete! Output directory: {output_dir}{RESET}")
@@ -459,13 +685,37 @@ def print_summary(results: Dict[str, Dict[str, any]], output_dir: Path):
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='PS5 ELF Downgrade & Fake Sign Tool - Processes decrypted ELF files'
+        description='PS5 ELF Processing Tool - Downgrade, fake sign, and decrypt ELF/SELF files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Interactive mode (will prompt for all options):
+    python main.py
+  
+  Command-line mode:
+    python main.py --mode downgrade --input decrypted_files/ --output processed_files/
+    python main.py --mode decrypt --input signed_files/ --output decrypted_files/
+    python main.py --mode full --input encrypted_files/ --output final_files/
+  
+  With all options:
+    python main.py --mode full --input in/ --output out/ --sdk-pair 4 
+                   --paid 0x3100000000000002 --ptype fake --batch --no-backup
+        """
     )
     
+    # Operation mode argument
+    parser.add_argument(
+        '--mode', '-m',
+        type=str,
+        choices=['downgrade', 'decrypt', 'full'],
+        help='Operation mode: downgrade (ELF to SELF), decrypt (SELF to ELF), full (both)'
+    )
+    
+    # Input/output arguments (not required for interactive mode)
     parser.add_argument(
         '--input', '-i',
         type=str,
-        help='Input directory containing decrypted ELF files'
+        help='Input directory containing files'
     )
     
     parser.add_argument(
@@ -474,10 +724,11 @@ def main():
         help='Output directory for processed files'
     )
     
+    # Downgrade-specific arguments
     parser.add_argument(
         '--sdk-pair', '-s',
         type=int,
-        help='SDK version pair number (1-10)'
+        help='SDK version pair number (1-10, for downgrade/full modes)'
     )
     
     parser.add_argument(
@@ -492,6 +743,7 @@ def main():
         help='Program type (name or hex, e.g., "fake" or "0x1")'
     )
     
+    # Common arguments
     parser.add_argument(
         '--no-backup',
         action='store_true',
@@ -515,18 +767,38 @@ def main():
     # Print banner
     print_banner()
     
+    # Check if we're in interactive mode (no arguments provided)
+    is_interactive = not any([
+        args.mode, args.input, args.output, args.sdk_pair, 
+        args.paid, args.ptype, args.no_backup, args.batch
+    ])
+    
+    # Get operation mode
+    if args.mode:
+        operation_map = {
+            'downgrade': 'downgrade_and_sign',
+            'decrypt': 'decrypt_only',
+            'full': 'full_pipeline'
+        }
+        operation = operation_map[args.mode]
+    elif is_interactive or not args.batch:
+        operation = get_operation_choice()
+    else:
+        operation = 'downgrade_and_sign'  # Default in batch mode
+    
     # Get input directory
     if args.input:
         input_dir = Path(args.input)
-    elif args.batch:
-        print(f"{RED}Error: Input directory required in batch mode{RESET}")
-        sys.exit(1)
-    else:
-        input_path = input(f"{CYAN}Enter input directory (decrypted files): {RESET}").strip()
+    elif is_interactive or not args.batch:
+        input_path = input(f"{CYAN}Enter input directory: {RESET}").strip()
         if not input_path:
             print(f"{RED}Error: Input directory is required{RESET}")
             sys.exit(1)
         input_dir = Path(input_path)
+    else:
+        print(f"{RED}Error: Input directory required in batch mode{RESET}")
+        parser.print_help()
+        sys.exit(1)
     
     # Validate input directory
     if not input_dir.exists():
@@ -540,113 +812,151 @@ def main():
     # Get output directory
     if args.output:
         output_dir = Path(args.output)
-    elif args.batch:
-        print(f"{RED}Error: Output directory required in batch mode{RESET}")
-        sys.exit(1)
-    else:
+    elif is_interactive or not args.batch:
         output_path = input(f"{CYAN}Enter output directory: {RESET}").strip()
         if not output_path:
             print(f"{RED}Error: Output directory is required{RESET}")
             sys.exit(1)
         output_dir = Path(output_path)
+    else:
+        print(f"{RED}Error: Output directory required in batch mode{RESET}")
+        parser.print_help()
+        sys.exit(1)
     
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Get SDK version pair
-    sdk_pairs = SDKVersionPatcher.get_supported_pairs()
+    # Get configuration based on operation mode
+    sdk_pair = None
+    paid = None
+    ptype = None
     
-    if args.sdk_pair:
-        sdk_pair = args.sdk_pair
-        if sdk_pair not in sdk_pairs:
-            print(f"{RED}Error: Invalid SDK pair. Must be between 1 and {len(sdk_pairs)}{RESET}")
-            sys.exit(1)
-    elif args.batch:
-        sdk_pair = 4  # Default in batch mode
-    else:
-        sdk_pair = get_sdk_version_choice()
-    
-    # Get PAID
-    if args.paid:
-        try:
-            if args.paid.startswith('0x'):
-                paid = int(args.paid, 16)
-            else:
-                paid = int(args.paid, 0)
-            
-            if not (0 <= paid <= 0xFFFFFFFFFFFFFFFF):
-                print(f"{RED}Error: PAID must be a 64-bit value (0-0xFFFFFFFFFFFFFFFF){RESET}")
+    if operation in ['downgrade_and_sign', 'full_pipeline']:
+        # Get SDK version pair
+        sdk_pairs = SDKVersionPatcher.get_supported_pairs()
+        
+        if args.sdk_pair:
+            sdk_pair = args.sdk_pair
+            if sdk_pair not in sdk_pairs:
+                print(f"{RED}Error: Invalid SDK pair. Must be between 1 and {len(sdk_pairs)}{RESET}")
                 sys.exit(1)
-        except ValueError:
-            print(f"{RED}Error: Invalid PAID format. Use hex (0x...) or decimal{RESET}")
-            sys.exit(1)
-    elif args.batch:
-        paid = 0x3100000000000002  # Default in batch mode
-    else:
-        paid = get_paid_choice()
-    
-    # Get PType
-    if args.ptype:
-        try:
-            if args.ptype.startswith('0x'):
-                ptype = int(args.ptype, 16)
-            else:
-                try:
-                    ptype = int(args.ptype, 0)
-                except ValueError:
-                    ptype = FakeSignedELFConverter.parse_ptype(args.ptype.lower())
-            
-            if not (0 <= ptype <= 0xFFFFFFFF):
-                print(f"{RED}Error: PType must be a 32-bit value (0-0xFFFFFFFF){RESET}")
+        elif is_interactive or not args.batch:
+            sdk_pair = get_sdk_version_choice()
+        else:
+            sdk_pair = 4  # Default in batch mode
+        
+        # Get PAID
+        if args.paid:
+            try:
+                if args.paid.startswith('0x'):
+                    paid = int(args.paid, 16)
+                else:
+                    paid = int(args.paid, 0)
+                
+                if not (0 <= paid <= 0xFFFFFFFFFFFFFFFF):
+                    print(f"{RED}Error: PAID must be a 64-bit value (0-0xFFFFFFFFFFFFFFFF){RESET}")
+                    sys.exit(1)
+            except ValueError:
+                print(f"{RED}Error: Invalid PAID format. Use hex (0x...) or decimal{RESET}")
                 sys.exit(1)
-        except Exception as e:
-            print(f"{RED}Error: Invalid ptype '{args.ptype}': {str(e)}{RESET}")
-            print(f"Valid options: fake, npdrm_exec, npdrm_dynlib, system_exec, system_dynlib, host_kernel, secure_module, secure_kernel")
-            sys.exit(1)
-    elif args.batch:
-        ptype = 1  # Default in batch mode
-    else:
-        ptype = get_ptype_choice()
-    
-    # Get SDK version pair values
-    ps5_sdk_version, ps4_version = sdk_pairs[sdk_pair]
+        elif is_interactive or not args.batch:
+            paid = get_paid_choice()
+        else:
+            paid = 0x3100000000000002  # Default in batch mode
+        
+        # Get PType
+        if args.ptype:
+            try:
+                if args.ptype.startswith('0x'):
+                    ptype = int(args.ptype, 16)
+                else:
+                    try:
+                        ptype = int(args.ptype, 0)
+                    except ValueError:
+                        ptype = FakeSignedELFConverter.parse_ptype(args.ptype.lower())
+                
+                if not (0 <= ptype <= 0xFFFFFFFF):
+                    print(f"{RED}Error: PType must be a 32-bit value (0-0xFFFFFFFF){RESET}")
+                    sys.exit(1)
+            except Exception as e:
+                print(f"{RED}Error: Invalid ptype '{args.ptype}': {str(e)}{RESET}")
+                print(f"Valid options: fake, npdrm_exec, npdrm_dynlib, system_exec, system_dynlib, host_kernel, secure_module, secure_kernel")
+                sys.exit(1)
+        elif is_interactive or not args.batch:
+            ptype = get_ptype_choice()
+        else:
+            ptype = 1  # Default in batch mode
     
     # Print configuration
     print(f"\n{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     print(f"{CYAN}{BOLD}                      CONFIGURATION                         {RESET}")
     print(f"{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
+    print(f"  {BOLD}Operation:{RESET} {operation.replace('_', ' ').title()}")
     print(f"  {BOLD}Input Directory:{RESET} {input_dir}")
     print(f"  {BOLD}Output Directory:{RESET} {output_dir}")
-    print(f"  {BOLD}SDK Version Pair:{RESET} {sdk_pair} (PS5: 0x{ps5_sdk_version:08X}, PS4: 0x{ps4_version:08X})")
-    print(f"  {BOLD}PAID:{RESET} 0x{paid:016X}")
-    print(f"  {BOLD}PType:{RESET} 0x{ptype:08X}")
-    print(f"  {BOLD}Create Backup:{RESET} {'Yes' if not args.no_backup else 'No'}")
+    
+    if operation in ['downgrade_and_sign', 'full_pipeline']:
+        ps5_sdk_version, ps4_version = sdk_pairs[sdk_pair]
+        print(f"  {BOLD}SDK Version Pair:{RESET} {sdk_pair} (PS5: 0x{ps5_sdk_version:08X}, PS4: 0x{ps4_version:08X})")
+        print(f"  {BOLD}PAID:{RESET} 0x{paid:016X}")
+        print(f"  {BOLD}PType:{RESET} 0x{ptype:08X}")
+        print(f"  {BOLD}Create Backup:{RESET} {'Yes' if not args.no_backup else 'No'}")
+    
     print(f"{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     
     # Confirm before proceeding
-    if not args.batch:
+    if is_interactive or not args.batch:
         confirm = input(f"\n{CYAN}Proceed with processing? (y/N): {RESET}").strip().lower()
         if confirm not in ['y', 'yes']:
             print(f"{YELLOW}Processing cancelled.{RESET}")
             sys.exit(0)
     
-    # Process files
+    # Process files based on operation
     try:
-        results = process_files(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            sdk_pair=sdk_pair,
-            paid=paid,
-            ptype=ptype,
-            create_backup=not args.no_backup,
-            use_colors=not args.no_colors
-        )
+        if operation == 'decrypt_only':
+            results = decrypt_files(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                use_colors=not args.no_colors
+            )
+        
+        elif operation == 'downgrade_and_sign':
+            results = process_downgrade_and_sign(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                sdk_pair=sdk_pair,
+                paid=paid,
+                ptype=ptype,
+                create_backup=not args.no_backup,
+                use_colors=not args.no_colors
+            )
+        
+        elif operation == 'full_pipeline':
+            results = process_full_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                sdk_pair=sdk_pair,
+                paid=paid,
+                ptype=ptype,
+                create_backup=not args.no_backup,
+                use_colors=not args.no_colors
+            )
+        
+        else:
+            print(f"{RED}Error: Unknown operation: {operation}{RESET}")
+            sys.exit(1)
         
         # Print summary
-        print_summary(results, output_dir)
+        print_summary(results, output_dir, operation)
         
         # Exit with appropriate code
-        if results['downgrade']['failed'] > 0 or results['signing']['failed'] > 0:
+        has_failures = any(
+            results.get(key, {}).get('failed', 0) > 0 
+            for key in ['decrypt', 'downgrade', 'signing']
+            if key in results
+        )
+        
+        if has_failures:
             print(f"\n{YELLOW}Warning: Some files failed to process{RESET}")
             sys.exit(1)
         else:

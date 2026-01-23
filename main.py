@@ -204,18 +204,71 @@ def get_operation_choice() -> str:
         else:
             print(f"{RED}Invalid choice. Please select 1-3.{RESET}")
 
-def copy_fakelib(source_dir: Path, output_dir: Path) -> Tuple[bool, str]:
+def get_fakelib_choice(project_root: Path, args_fakelib: Optional[str] = None) -> Optional[Path]:
+    """Prompt user to select or specify fakelib directory."""
+    if args_fakelib:
+        fakelib_path = Path(args_fakelib)
+        if fakelib_path.exists() and fakelib_path.is_dir():
+            return fakelib_path
+        else:
+            print(f"{YELLOW}Warning: Custom fakelib directory does not exist: {fakelib_path}{RESET}")
+            print(f"{YELLOW}Falling back to interactive selection{RESET}")
+    
+    default_fakelib = project_root / "fakelib"
+    
+    print(f"\n{CYAN}Fakelib Directory Options:{RESET}")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    print(f"{BOLD}{'Option':<8} {'Description':<40}{RESET}")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    print(f"  1       Use default fakelib ({default_fakelib})")
+    print(f"  2       Use custom fakelib directory")
+    print(f"  3       Skip fakelib copy")
+    print(f"{YELLOW}{'─' * 60}{RESET}")
+    
+    while True:
+        choice = input(f"\n{CYAN}Select fakelib option (1-3, default=1): {RESET}").strip()
+        if not choice:
+            print(f"{YELLOW}Using default: Use default fakelib{RESET}")
+            return default_fakelib if default_fakelib.exists() else None
+        
+        if choice == '1':
+            if default_fakelib.exists() and default_fakelib.is_dir():
+                return default_fakelib
+            else:
+                print(f"{YELLOW}Default fakelib not found at {default_fakelib}{RESET}")
+                return None
+        elif choice == '2':
+            while True:
+                custom_path = input(f"{CYAN}Enter custom fakelib directory: {RESET}").strip()
+                if not custom_path:
+                    print(f"{YELLOW}Using default fakelib instead{RESET}")
+                    return default_fakelib if default_fakelib.exists() else None
+                
+                fakelib_path = Path(custom_path)
+                if fakelib_path.exists() and fakelib_path.is_dir():
+                    return fakelib_path
+                else:
+                    print(f"{RED}Error: Directory does not exist or is not a directory: {fakelib_path}{RESET}")
+                    print(f"{YELLOW}Please enter a valid directory path{RESET}")
+        elif choice == '3':
+            print(f"{YELLOW}Skipping fakelib copy{RESET}")
+            return None
+        else:
+            print(f"{RED}Invalid choice. Please select 1-3.{RESET}")
+
+def copy_fakelib(fakelib_source: Optional[Path], output_dir: Path) -> Tuple[bool, str]:
     """
     Copy the fakelib directory to the output directory.
     
     Args:
-        source_dir: Root project directory containing fakelib
+        fakelib_source: Source fakelib directory (None to skip)
         output_dir: Output directory where fakelib should be copied
         
     Returns:
         Tuple of (success, message)
     """
-    fakelib_source = source_dir / "fakelib"
+    if fakelib_source is None:
+        return True, "Fakelib copy skipped"
     
     if not fakelib_source.exists():
         return True, f"fakelib directory not found at {fakelib_source} (skipping)"
@@ -235,14 +288,14 @@ def copy_fakelib(source_dir: Path, output_dir: Path) -> Tuple[bool, str]:
         
         # Count files for reporting
         file_count = sum(1 for _ in fakelib_dest.rglob('*') if _.is_file())
-        return True, f"Copied fakelib directory ({file_count} files)"
+        return True, f"Copied fakelib directory from {fakelib_source} ({file_count} files)"
     
     except Exception as e:
         return False, f"Failed to copy fakelib: {str(e)}"
 
 def apply_libc_patch(input_dir: Path, use_colors: bool = True) -> Tuple[int, Dict[str, str]]:
     """
-    Apply the Perl patch to libc.prx files when SDK pair is 6.
+    Apply the Perl patch to libc.prx files when SDK pair is 6 or below.
     
     Args:
         input_dir: Directory containing the processed files
@@ -254,7 +307,7 @@ def apply_libc_patch(input_dir: Path, use_colors: bool = True) -> Tuple[int, Dic
     results = {}
     patched_count = 0
     
-    print(f"\n{BLUE}{BOLD}[Extra Step] Applying libc.prx patch for SDK pair 6{RESET}")
+    print(f"\n{BLUE}{BOLD}[Extra Step] Applying libc.prx patch for SDK pairs 1-6{RESET}")
     print(f"{YELLOW}{'─' * 60}{RESET}")
     
     # Search recursively for libc.prx files (case-insensitive)
@@ -356,7 +409,7 @@ def apply_libc_patch(input_dir: Path, use_colors: bool = True) -> Tuple[int, Dic
             print(f"  {RED}Error reading {relative_path}: {str(e)[:50]}{RESET}")
     
     # Also try to search for the pattern in all binary files if no libc.prx found
-    if patched_count == 0 and len(potential_files) == 0:
+    if patched_count == 0:
         print(f"  {YELLOW}Searching for pattern in all binary files...{RESET}")
         
         # Search for pattern in all files
@@ -371,7 +424,7 @@ def apply_libc_patch(input_dir: Path, use_colors: bool = True) -> Tuple[int, Dic
         
         print(f"  Checking {len(all_files)} binary file(s) for pattern...")
         
-        for file_path in all_files:
+        for file_path in all_files[:100]:  # Limit to first 100 files to avoid being too slow
             try:
                 with open(file_path, 'rb') as f:
                     content = f.read(10000)  # Read first 10KB to check
@@ -380,19 +433,13 @@ def apply_libc_patch(input_dir: Path, use_colors: bool = True) -> Tuple[int, Dic
                     relative_path = file_path.relative_to(input_dir)
                     print(f"  Found pattern in: {relative_path}")
                     
-                    # Ask user if they want to patch this file
-                    if use_colors and not args.batch:
-                        response = input(f"    {CYAN}Patch this file? (y/N): {RESET}").strip().lower()
-                        if response not in ['y', 'yes']:
-                            continue
+                    # Read entire file
+                    with open(file_path, 'rb') as f:
+                        full_content = f.read()
                     
                     # Create backup
                     backup_path = file_path.with_suffix(file_path.suffix + '.bak')
                     shutil.copy2(file_path, backup_path)
-                    
-                    # Read entire file
-                    with open(file_path, 'rb') as f:
-                        full_content = f.read()
                     
                     # Apply patch
                     patched_content = full_content.replace(pattern, replacement)
@@ -561,7 +608,7 @@ def decrypt_files(input_dir: Path, output_dir: Path, use_colors: bool = True) ->
 
 def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int, 
                                paid: int, ptype: int, create_backup: bool = True,
-                               use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+                               use_colors: bool = True, fakelib_source: Optional[Path] = None) -> Dict[str, Dict[str, any]]:
     """
     Process files through downgrade and signing pipeline.
     
@@ -573,6 +620,7 @@ def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int,
         ptype: Program type
         create_backup: Whether to create backups during downgrade
         use_colors: Whether to use colored output
+        fakelib_source: Optional custom fakelib directory
         
     Returns:
         Dictionary with processing results
@@ -716,8 +764,8 @@ def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int,
     print(f"\n{CYAN}Signing complete: {results['signing']['successful']} successful, "
           f"{results['signing']['failed']} failed{RESET}")
     
-    # Step 3: Apply libc.prx patch if SDK pair is 6
-    if sdk_pair == 6:
+    # Step 3: Apply libc.prx patch if SDK pair is 6 or below (1-6)
+    if sdk_pair <= 6:
         patched_count, patch_results = apply_libc_patch(output_dir, use_colors)
         results['libc_patch']['applied'] = patched_count
         results['libc_patch']['results'] = patch_results
@@ -726,9 +774,7 @@ def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int,
     print(f"\n{BLUE}{BOLD}[Step 4/3] Copying Fakelib Directory{RESET}")
     print(f"{YELLOW}{'─' * 60}{RESET}")
     
-    # Find project root
-    project_root = Path(__file__).parent
-    success, message = copy_fakelib(project_root, output_dir)
+    success, message = copy_fakelib(fakelib_source, output_dir)
     
     results['fakelib']['success'] = success
     results['fakelib']['message'] = message
@@ -742,7 +788,7 @@ def process_downgrade_and_sign(input_dir: Path, output_dir: Path, sdk_pair: int,
 
 def process_full_pipeline(input_dir: Path, output_dir: Path, sdk_pair: int, 
                          paid: int, ptype: int, create_backup: bool = True,
-                         use_colors: bool = True) -> Dict[str, Dict[str, any]]:
+                         use_colors: bool = True, fakelib_source: Optional[Path] = None) -> Dict[str, Dict[str, any]]:
     """
     Process files through full pipeline: decrypt → downgrade → sign.
     
@@ -754,6 +800,7 @@ def process_full_pipeline(input_dir: Path, output_dir: Path, sdk_pair: int,
         ptype: Program type
         create_backup: Whether to create backups during downgrade
         use_colors: Whether to use colored output
+        fakelib_source: Optional custom fakelib directory
         
     Returns:
         Dictionary with processing results
@@ -781,7 +828,7 @@ def process_full_pipeline(input_dir: Path, output_dir: Path, sdk_pair: int,
         
         # Step 2: Downgrade and sign
         downgrade_sign_results = process_downgrade_and_sign(
-            temp_dir, output_dir, sdk_pair, paid, ptype, create_backup, use_colors
+            temp_dir, output_dir, sdk_pair, paid, ptype, create_backup, use_colors, fakelib_source
         )
         
         # Combine results
@@ -910,6 +957,7 @@ Examples:
   With all options:
     python main.py --mode full --input in/ --output out/ --sdk-pair 4 
                    --paid 0x3100000000000002 --ptype fake --batch --no-backup
+                   --fakelib /path/to/custom/fakelib
         """
     )
     
@@ -953,6 +1001,13 @@ Examples:
         help='Program type (name or hex, e.g., "fake" or "0x1")'
     )
     
+    # Fakelib argument
+    parser.add_argument(
+        '--fakelib', '-f',
+        type=str,
+        help='Custom fakelib directory path (optional)'
+    )
+    
     # Common arguments
     parser.add_argument(
         '--no-backup',
@@ -980,7 +1035,7 @@ Examples:
     # Check if we're in interactive mode (no arguments provided)
     is_interactive = not any([
         args.mode, args.input, args.output, args.sdk_pair, 
-        args.paid, args.ptype, args.no_backup, args.batch
+        args.paid, args.ptype, args.fakelib, args.no_backup, args.batch
     ])
     
     # Get operation mode
@@ -1035,6 +1090,30 @@ Examples:
     
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Find project root
+    project_root = Path(__file__).parent
+    
+    # Get fakelib directory
+    fakelib_source = None
+    if operation in ['downgrade_and_sign', 'full_pipeline']:
+        if is_interactive or not args.batch:
+            fakelib_source = get_fakelib_choice(project_root, args.fakelib)
+        elif args.fakelib:
+            fakelib_path = Path(args.fakelib)
+            if fakelib_path.exists() and fakelib_path.is_dir():
+                fakelib_source = fakelib_path
+            else:
+                print(f"{YELLOW}Warning: Custom fakelib directory does not exist: {fakelib_path}{RESET}")
+                print(f"{YELLOW}Will use default fakelib if available{RESET}")
+                default_fakelib = project_root / "fakelib"
+                if default_fakelib.exists() and default_fakelib.is_dir():
+                    fakelib_source = default_fakelib
+        else:
+            # Use default fakelib in batch mode
+            default_fakelib = project_root / "fakelib"
+            if default_fakelib.exists() and default_fakelib.is_dir():
+                fakelib_source = default_fakelib
     
     # Get configuration based on operation mode
     sdk_pair = None
@@ -1105,6 +1184,11 @@ Examples:
     print(f"  {BOLD}Input Directory:{RESET} {input_dir}")
     print(f"  {BOLD}Output Directory:{RESET} {output_dir}")
     
+    if fakelib_source:
+        print(f"  {BOLD}Fakelib Source:{RESET} {fakelib_source}")
+    else:
+        print(f"  {BOLD}Fakelib Source:{RESET} None (will skip)")
+    
     if operation in ['downgrade_and_sign', 'full_pipeline']:
         ps5_sdk_version, ps4_version = sdk_pairs[sdk_pair]
         print(f"  {BOLD}SDK Version Pair:{RESET} {sdk_pair} (PS5: 0x{ps5_sdk_version:08X}, PS4: 0x{ps4_version:08X})")
@@ -1112,9 +1196,9 @@ Examples:
         print(f"  {BOLD}PType:{RESET} 0x{ptype:08X}")
         print(f"  {BOLD}Create Backup:{RESET} {'Yes' if not args.no_backup else 'No'}")
         
-        # Special note for SDK pair 6
-        if sdk_pair == 6:
-            print(f"  {YELLOW}{BOLD}Note:{RESET} SDK pair 6 selected - will apply libc.prx patch after signing{RESET}")
+        # Special note for SDK pair 6 or below
+        if sdk_pair <= 6:
+            print(f"  {YELLOW}{BOLD}Note:{RESET} SDK pair {sdk_pair} selected - will apply libc.prx patch after signing{RESET}")
     
     print(f"{BLUE}{BOLD}══════════════════════════════════════════════════════════{RESET}")
     
@@ -1142,7 +1226,8 @@ Examples:
                 paid=paid,
                 ptype=ptype,
                 create_backup=not args.no_backup,
-                use_colors=not args.no_colors
+                use_colors=not args.no_colors,
+                fakelib_source=fakelib_source
             )
         
         elif operation == 'full_pipeline':
@@ -1153,7 +1238,8 @@ Examples:
                 paid=paid,
                 ptype=ptype,
                 create_backup=not args.no_backup,
-                use_colors=not args.no_colors
+                use_colors=not args.no_colors,
+                fakelib_source=fakelib_source
             )
         
         else:

